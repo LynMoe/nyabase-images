@@ -1,6 +1,7 @@
 name = "nyabase-images"
 main = "worker.js"
 compatibility_date = "2026-09-20"
+workers_dev = true
 
 # Optional overrides; defaults are constants at the top of worker.js
 # [vars]

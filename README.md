@@ -43,12 +43,19 @@ incus:
 
 `https://github.com/LynMoe/nyabase-images`, release tag `stable`.
 
-```bash
-cd worker && npx wrangler deploy
-```
+GitHub Actions deploys on pushes to `worker/**` (`deploy-worker.yml`).
 
-Or paste `worker.js` into the Cloudflare dashboard as an ES module.
-Optional env: `GITHUB_OWNER`, `GITHUB_REPO`, `RELEASE_TAG`, `GITHUB_REPO_URL`.
+Repo secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Required |
+| :--- | :--- |
+| `CLOUDFLARE_ACCOUNT_ID` | Yes. Dashboard right sidebar, 32 hex chars. |
+| `CLOUDFLARE_API_TOKEN` | Preferred. Account permission **Workers Scripts: Edit**, **Account Settings: Read**. |
+| `CLOUDFLARE_EMAIL` + `CLOUDFLARE_API_KEY` | Alternative to the token: account email + Global API Key. |
+
+R2 / S3 access keys (AK/SK) are **not** used. This Worker only 302s to GitHub Releases.
+
+After the first deploy, Incus talks to `https://nyabase-images.<account>.workers.dev`. Custom domain is optional (Worker route on a zone).
 
 | Path | Behavior |
 | :--- | :--- |
@@ -67,6 +74,7 @@ images/ubuntu-24.04/image.json
 scripts/sync.py                  # publish on version bump
 worker/worker.js
 .github/workflows/sync.yml
+.github/workflows/deploy-worker.yml
 ```
 
 Blobs are **not** in git. They are GitHub Release assets named
