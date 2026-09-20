@@ -176,13 +176,13 @@ def ensure_release() -> None:
     )
 
 
-def upload(path: Path, name: str) -> None:
-    log(f"upload {name}")
+def upload(path: Path) -> None:
+    log(f"upload {path.name}")
     gh(
         "release",
         "upload",
         RELEASE_TAG,
-        f"{path}#{name}",
+        str(path),
         "--repo",
         GITHUB_REPO,
         "--clobber",
@@ -224,10 +224,10 @@ def main() -> int:
         for item_name, filename in file_map.items():
             src_item = src_items[item_name]
             url = f"{UPSTREAM_BASE}/{src_item['path']}"
-            dest = dest_dir / filename
+            dest = dest_dir / asset_name(image, filename)
             log(f"download {image['id']} {serial} {filename}")
             http_download(url, dest, src_item.get("sha256"))
-            upload(dest, asset_name(image, filename))
+            upload(dest)
 
         products[key] = product
         changed = True
@@ -259,8 +259,8 @@ def main() -> int:
     images_path = WORK / "images.json"
     index_path.write_text(json.dumps(index, indent=2) + "\n")
     images_path.write_text(json.dumps(images_json, indent=2) + "\n")
-    upload(index_path, "index.json")
-    upload(images_path, "images.json")
+    upload(index_path)
+    upload(images_path)
     log("sync complete")
     return 0
 
