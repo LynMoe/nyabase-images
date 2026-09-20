@@ -1,0 +1,17 @@
+{
+  "id": "ubuntu-24.04",
+  "os": "ubuntu",
+  "release": "24.04",
+  "codename": "noble",
+  "arch": "amd64",
+  "variant": "default",
+  "version": "1",
+  "upstream_product": "ubuntu:noble:amd64:default",
+  "upstream_version": "20260920_07:42",
+  "aliases": [
+    "ubuntu/24.04",
+    "ubuntu/noble",
+    "ubuntu/24.04/default",
+    "ubuntu/noble/default"
+  ]
+}

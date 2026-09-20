@@ -1,0 +1,8 @@
+.wrangler/
+node_modules/
+dist/
+.work/
+__pycache__/
+*.squashfs
+*.tar.xz
+.DS_Store

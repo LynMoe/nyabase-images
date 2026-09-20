@@ -1,0 +1,10 @@
+name = "nyabase-images"
+main = "worker.js"
+compatibility_date = "2026-09-20"
+
+# Optional overrides; defaults are constants at the top of worker.js
+# [vars]
+# GITHUB_OWNER = "LynMoe"
+# GITHUB_REPO = "nyabase-images"
+# RELEASE_TAG = "stable"
+# GITHUB_REPO_URL = "https://github.com/LynMoe/nyabase-images"
