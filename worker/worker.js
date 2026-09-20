@@ -12,6 +12,7 @@ const GITHUB_OWNER = "LynMoe";
 const GITHUB_REPO = "nyabase-images";
 const GITHUB_REPO_URL = "https://github.com/LynMoe/nyabase-images";
 const RELEASE_TAG = "stable";
+const WORKER_PUBLIC_URL = "https://nyabase-images.nyabase-lxc-images.workers.dev";
 const USER_AGENT = "nyabase-images-worker/1.0";
 
 const IMAGE_FILE_RE =
@@ -42,7 +43,12 @@ async function handle(request, env, ctx) {
     return html(landing(repoUrl, tag, url.origin));
   }
   if (path === "/health" || path === "/api/health") {
-    return json({ ok: true, repo: `${owner}/${repo}`, tag });
+    return json({
+      ok: true,
+      repo: `${owner}/${repo}`,
+      tag,
+      url: env?.WORKER_PUBLIC_URL || WORKER_PUBLIC_URL,
+    });
   }
   if (path === "/streams/v1/index.json") {
     return asset(request, owner, repo, tag, "index.json", ctx);

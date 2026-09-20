@@ -22,10 +22,12 @@ Current pins: Ubuntu 22.04 **v1** and 24.04 **v1**, both serial
 
 ## Incus remote
 
-After the Worker is deployed (custom domain recommended):
+Default simplestreams URL (live):
+
+**https://nyabase-images.nyabase-lxc-images.workers.dev**
 
 ```bash
-incus remote add nyai https://images.example.com --protocol=simplestreams
+incus remote add nyai https://nyabase-images.nyabase-lxc-images.workers.dev --protocol=simplestreams
 incus image list nyai:
 incus launch nyai:ubuntu/24.04 box
 ```
@@ -34,7 +36,7 @@ nyabase:
 
 ```yaml
 incus:
-  imageSourceServer: https://images.example.com
+  imageSourceServer: https://nyabase-images.nyabase-lxc-images.workers.dev
 ```
 
 ## Worker
@@ -55,7 +57,8 @@ Repo secrets (Settings → Secrets and variables → Actions):
 
 R2 / S3 access keys (AK/SK) are **not** used. This Worker only 302s to GitHub Releases.
 
-After the first deploy, Incus talks to `https://nyabase-images.<account>.workers.dev`. Custom domain is optional (Worker route on a zone).
+Deployed Worker: `https://nyabase-images.nyabase-lxc-images.workers.dev`.
+Custom domain is optional (Worker route on a Cloudflare zone).
 
 | Path | Behavior |
 | :--- | :--- |
