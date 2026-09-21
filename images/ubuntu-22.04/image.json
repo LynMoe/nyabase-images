@@ -5,9 +5,13 @@
   "codename": "jammy",
   "arch": "amd64",
   "variant": "default",
-  "version": "1",
+  "version": "2",
   "upstream_product": "ubuntu:jammy:amd64:default",
   "upstream_version": "20260920_07:42",
+  "bake": {
+    "recipe": "workload-v1",
+    "serial": "20260921_nb01"
+  },
   "aliases": [
     "ubuntu/22.04",
     "ubuntu/jammy",

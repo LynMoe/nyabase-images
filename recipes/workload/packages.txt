@@ -1,0 +1,9 @@
+openssh-server
+iproute2
+iputils-ping
+ca-certificates
+bash
+curl
+wget
+vim
+htop

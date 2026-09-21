@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -106,13 +107,22 @@ def stream_path(image: dict, filename: str) -> str:
     )
 
 
+def vanilla_asset_name(image: dict, filename: str) -> str:
+    serial = str(image["upstream_version"]).replace(":", "-")
+    return (
+        f"{image['os']}-{image['release']}-{image['arch']}-"
+        f"vanilla-u{serial}-{filename}"
+    )
+
+
 def simplestreams_version(image: dict) -> str:
     """Incus skips version ids shorter than 8 chars or not YYYYMMDD-prefixed.
 
-    Project `version` (1, 2, …) is the GitHub/Worker blob pin. The catalog
-    version key must be the linuxcontainers serial (e.g. 20260920_07:42).
+    Project `version` is the GitHub/Worker blob pin. The catalog version key
+    is bake.serial (YYYYMMDD_nbNN) when present, else the upstream serial.
     """
-    serial = image["upstream_version"]
+    bake = image.get("bake") or {}
+    serial = str(bake.get("serial") or image["upstream_version"])
     if len(serial) < 8:
         raise SystemExit(
             f"{image['id']}: upstream_version {serial!r} is not an Incus "
@@ -152,10 +162,89 @@ def versions_incus_visible(product: dict) -> bool:
 
 
 def already_published(image: dict, current: dict | None) -> bool:
-    if FORCE or current is None:
+    if current is None:
         return False
     product = (current.get("products") or {}).get(product_key(image)) or {}
     return product_has_project_blobs(product, image)
+
+
+def release_asset_url(name: str) -> str:
+    return f"https://github.com/{GITHUB_REPO}/releases/download/{RELEASE_TAG}/{name}"
+
+
+def try_download_release_asset(name: str, dest: Path) -> bool:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        http_download(release_asset_url(name), dest)
+        return True
+    except Exception as exc:
+        dest.unlink(missing_ok=True)
+        log(f"release asset miss {name}: {exc}")
+        return False
+
+
+def product_from_pin(image: dict) -> dict:
+    serial = simplestreams_version(image)
+    return {
+        "aliases": ",".join(image.get("aliases") or []),
+        "arch": image["arch"],
+        "os": image.get("os_title") or str(image["os"]).capitalize(),
+        "release": image["release"],
+        "release_title": image["release"],
+        "variant": image["variant"],
+        "requirements": {},
+        "versions": {
+            serial: {
+                "items": {
+                    "incus.tar.xz": {
+                        "ftype": "incus.tar.xz",
+                        "path": stream_path(image, "incus.tar.xz"),
+                    },
+                    "root.squashfs": {
+                        "ftype": "squashfs",
+                        "path": stream_path(image, "rootfs.squashfs"),
+                    },
+                },
+                "os_upstream_version": serial,
+                "label": f"nyabase-v{image['version']}",
+            }
+        },
+    }
+
+
+def catalog_combined_hash(product: dict) -> str | None:
+    for version in (product.get("versions") or {}).values():
+        for item in (version.get("items") or {}).values():
+            digest = item.get("combined_squashfs_sha256")
+            if digest:
+                return str(digest)
+    return None
+
+
+def force_reupload_identical(image: dict, existing: dict) -> None:
+    dest_dir = WORK / image["id"] / f"v{image['version']}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    meta_name = asset_name(image, "incus.tar.xz")
+    squash_name = asset_name(image, "rootfs.squashfs")
+    meta = dest_dir / meta_name
+    squash = dest_dir / squash_name
+    for name, dest in ((meta_name, meta), (squash_name, squash)):
+        if dest.exists():
+            continue
+        if not try_download_release_asset(name, dest):
+            raise SystemExit(
+                f"FORCE {image['id']} v{image['version']}: {name} is not on {RELEASE_TAG}; "
+                "refusing to re-bake a new combined hash"
+            )
+    digest = hashlib.sha256(meta.read_bytes() + squash.read_bytes()).hexdigest()
+    expected = catalog_combined_hash(existing)
+    if expected and expected != digest:
+        raise SystemExit(
+            f"FORCE refused {image['id']}: combined {digest} != catalog {expected}"
+        )
+    upload(meta)
+    upload(squash)
+    log(f"FORCE re-uploaded identical {image['id']} v{image['version']} combined {digest}")
 
 
 def relabel_product_version(image: dict, product: dict) -> dict:
@@ -204,6 +293,11 @@ def rewrite_product(image: dict, upstream_product: dict) -> dict:
     items["root.squashfs"] = squash
 
     aliases = image.get("aliases") or []
+    version_entry: dict = {
+        "items": items,
+        "os_upstream_version": serial,
+        "label": f"nyabase-v{image['version']}",
+    }
     return {
         "aliases": ",".join(aliases),
         "arch": image["arch"],
@@ -213,10 +307,7 @@ def rewrite_product(image: dict, upstream_product: dict) -> dict:
         "variant": image["variant"],
         "requirements": upstream_product.get("requirements") or {},
         "versions": {
-            simplestreams_version(image): {
-                "items": items,
-                "os_upstream_version": serial,
-            }
+            simplestreams_version(image): version_entry,
         },
     }, src_items
 
@@ -269,7 +360,9 @@ def main() -> int:
         key = product_key(image)
         existing = products.get(key) or {}
         if already_published(image, current):
-            if versions_incus_visible(existing) and simplestreams_version(image) in (
+            if FORCE:
+                force_reupload_identical(image, existing)
+            elif versions_incus_visible(existing) and simplestreams_version(image) in (
                 existing.get("versions") or {}
             ):
                 log(f"skip {image['id']} version {image['version']} (already on {RELEASE_TAG})")
@@ -281,31 +374,94 @@ def main() -> int:
                 f"{simplestreams_version(image)} (blobs already on {RELEASE_TAG})"
             )
             continue
-        if upstream is None:
-            upstream = load_upstream()
-        src = (upstream.get("products") or {}).get(image["upstream_product"])
-        if not src:
-            raise SystemExit(f"upstream product not found: {image['upstream_product']}")
-        product, src_items = rewrite_product(image, src)
         serial = image["upstream_version"]
         dest_dir = WORK / image["id"] / f"v{image['version']}"
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        file_map = {
-            "incus.tar.xz": "incus.tar.xz",
-            "root.squashfs": "rootfs.squashfs",
+        vanilla_dir = WORK / "vanilla" / image["id"] / str(serial).replace(":", "-")
+        vanilla_dir.mkdir(parents=True, exist_ok=True)
+        vanilla_files = {
+            "incus.tar.xz": vanilla_asset_name(image, "incus.tar.xz"),
+            "rootfs.squashfs": vanilla_asset_name(image, "rootfs.squashfs"),
         }
-        for item_name, filename in file_map.items():
-            src_item = src_items[item_name]
-            url = f"{UPSTREAM_BASE}/{src_item['path']}"
-            dest = dest_dir / asset_name(image, filename)
-            log(f"download {image['id']} {serial} {filename}")
-            http_download(url, dest, src_item.get("sha256"))
-            upload(dest)
+        missing_vanilla = [
+            filename
+            for filename, vanilla_name in vanilla_files.items()
+            if not (vanilla_dir / vanilla_name).exists()
+        ]
+        for filename in list(missing_vanilla):
+            vanilla_name = vanilla_files[filename]
+            dest = vanilla_dir / vanilla_name
+            if try_download_release_asset(vanilla_name, dest):
+                log(f"reuse release vanilla {vanilla_name}")
+                missing_vanilla.remove(filename)
+        product: dict | None = None
+        if missing_vanilla:
+            if upstream is None:
+                upstream = load_upstream()
+            src = (upstream.get("products") or {}).get(image["upstream_product"])
+            if not src:
+                raise SystemExit(f"upstream product not found: {image['upstream_product']}")
+            product, src_items = rewrite_product(image, src)
+            upstream_names = {
+                "incus.tar.xz": "incus.tar.xz",
+                "rootfs.squashfs": "root.squashfs",
+            }
+            for filename in missing_vanilla:
+                dest = vanilla_dir / vanilla_files[filename]
+                src_item = src_items[upstream_names[filename]]
+                url = f"{UPSTREAM_BASE}/{src_item['path']}"
+                log(f"download vanilla {image['id']} {serial} {filename}")
+                try:
+                    http_download(url, dest, src_item.get("sha256"))
+                except Exception as exc:
+                    raise SystemExit(
+                        f"vanilla input missing for {image['id']} {serial}: "
+                        f"not on {RELEASE_TAG} and upstream fetch failed: {exc}"
+                    ) from exc
+                upload(dest)
+        if product is None:
+            product = product_from_pin(image)
+
+        if not image.get("bake"):
+            raise SystemExit(f"{image['id']} missing bake.serial; vanilla is not a catalog product")
+        bake_cmd = [
+            sys.executable,
+            str(ROOT / "scripts" / "bake.py"),
+            "--image-json",
+            str(image["_path"]),
+            "--vanilla-squashfs",
+            str(vanilla_dir / vanilla_files["rootfs.squashfs"]),
+            "--vanilla-incus-tar",
+            str(vanilla_dir / vanilla_files["incus.tar.xz"]),
+            "--out-dir",
+            str(dest_dir),
+        ]
+        log(f"bake {image['id']}")
+        subprocess.run(bake_cmd, check=True)
+
+        baked_meta = dest_dir / "incus.tar.xz"
+        baked_squash = dest_dir / "rootfs.squashfs"
+        meta_asset = dest_dir / asset_name(image, "incus.tar.xz")
+        squash_asset = dest_dir / asset_name(image, "rootfs.squashfs")
+        shutil.copy2(baked_meta, meta_asset)
+        shutil.copy2(baked_squash, squash_asset)
+        upload(meta_asset)
+        upload(squash_asset)
+
+        digest = hashlib.sha256(meta_asset.read_bytes() + baked_squash.read_bytes()).hexdigest()
+        version_key = simplestreams_version(image)
+        items = product["versions"][version_key]["items"]
+        items["incus.tar.xz"]["sha256"] = hashlib.sha256(meta_asset.read_bytes()).hexdigest()
+        items["incus.tar.xz"]["size"] = meta_asset.stat().st_size
+        items["root.squashfs"]["sha256"] = hashlib.sha256(squash_asset.read_bytes()).hexdigest()
+        items["root.squashfs"]["size"] = squash_asset.stat().st_size
+        items["root.squashfs"]["combined_squashfs_sha256"] = digest
+        items["incus.tar.xz"]["combined_squashfs_sha256"] = digest
 
         products[key] = product
         changed = True
-        log(f"published {image['id']} version {image['version']} from {serial}")
+        log(f"published baked {image['id']} version {image['version']} serial {version_key}")
 
     index = {
         "format": "index:1.0",
