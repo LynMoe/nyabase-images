@@ -11,8 +11,8 @@ as the Incus remote.
 
 Versions live in `images/*/image.json`:
 
-- `version` — this project's minor. Incus path uses this (`.../default/1/...`).
-- `upstream_version` — exact linuxcontainers serial to snapshot.
+- `version` — this project's minor. Blob paths and GitHub asset names use this (`.../default/1/...`, `...-v1-rootfs.squashfs`).
+- `upstream_version` — exact linuxcontainers serial to snapshot. **This is the Incus simplestreams version key.** Incus ignores version ids shorter than 8 characters or not `YYYYMMDD`-prefixed (`products.go` `ToAPI`), so project `version` `1` must not be the catalog key.
 
 Actions **do not** track upstream daily builds. Bump `version` (and set a
 still-available `upstream_version`) then push.

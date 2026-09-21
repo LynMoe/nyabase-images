@@ -3,6 +3,8 @@
 Each directory is one Incus image pin. GitHub Actions publishes **only**
 when `version` in that directory's `image.json` is new on the `stable`
 release. Upstream linuxcontainers.org is not followed automatically.
+The simplestreams `versions` key is `upstream_version` (must be
+`YYYYMMDD…`); Incus skips short keys such as `1`.
 
 | Directory | Alias | Pinned version | Upstream serial |
 | :--- | :--- | :--- | :--- |

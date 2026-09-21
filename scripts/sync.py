@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -105,12 +106,74 @@ def stream_path(image: dict, filename: str) -> str:
     )
 
 
+def simplestreams_version(image: dict) -> str:
+    """Incus skips version ids shorter than 8 chars or not YYYYMMDD-prefixed.
+
+    Project `version` (1, 2, …) is the GitHub/Worker blob pin. The catalog
+    version key must be the linuxcontainers serial (e.g. 20260920_07:42).
+    """
+    serial = image["upstream_version"]
+    if len(serial) < 8:
+        raise SystemExit(
+            f"{image['id']}: upstream_version {serial!r} is not an Incus "
+            "simplestreams version (need YYYYMMDD…)"
+        )
+    try:
+        time.strptime(serial[:8], "%Y%m%d")
+    except ValueError as exc:
+        raise SystemExit(
+            f"{image['id']}: upstream_version {serial!r} must start with YYYYMMDD"
+        ) from exc
+    return serial
+
+
+def path_marker(image: dict) -> str:
+    return f"/{image['variant']}/{image['version']}/"
+
+
+def product_has_project_blobs(product: dict, image: dict) -> bool:
+    marker = path_marker(image)
+    for version in (product.get("versions") or {}).values():
+        for item in (version.get("items") or {}).values():
+            if marker in str(item.get("path") or ""):
+                return True
+    return False
+
+
+def versions_incus_visible(product: dict) -> bool:
+    for name in product.get("versions") or {}:
+        if len(name) >= 8:
+            try:
+                time.strptime(name[:8], "%Y%m%d")
+                return True
+            except ValueError:
+                continue
+    return False
+
+
 def already_published(image: dict, current: dict | None) -> bool:
     if FORCE or current is None:
         return False
     product = (current.get("products") or {}).get(product_key(image)) or {}
-    versions = product.get("versions") or {}
-    return image["version"] in versions
+    return product_has_project_blobs(product, image)
+
+
+def relabel_product_version(image: dict, product: dict) -> dict:
+    serial = simplestreams_version(image)
+    marker = path_marker(image)
+    chosen: dict | None = None
+    for version in (product.get("versions") or {}).values():
+        items = version.get("items") or {}
+        if any(marker in str(item.get("path") or "") for item in items.values()):
+            chosen = version
+            break
+    if chosen is None:
+        raise SystemExit(f"{image['id']}: no items for project version {image['version']}")
+    labeled = dict(chosen)
+    labeled["os_upstream_version"] = serial
+    out = dict(product)
+    out["versions"] = {serial: labeled}
+    return out
 
 
 def load_upstream() -> dict:
@@ -150,7 +213,7 @@ def rewrite_product(image: dict, upstream_product: dict) -> dict:
         "variant": image["variant"],
         "requirements": upstream_product.get("requirements") or {},
         "versions": {
-            image["version"]: {
+            simplestreams_version(image): {
                 "items": items,
                 "os_upstream_version": serial,
             }
@@ -204,8 +267,19 @@ def main() -> int:
 
     for image in catalog:
         key = product_key(image)
+        existing = products.get(key) or {}
         if already_published(image, current):
-            log(f"skip {image['id']} version {image['version']} (already on {RELEASE_TAG})")
+            if versions_incus_visible(existing) and simplestreams_version(image) in (
+                existing.get("versions") or {}
+            ):
+                log(f"skip {image['id']} version {image['version']} (already on {RELEASE_TAG})")
+                continue
+            products[key] = relabel_product_version(image, existing)
+            changed = True
+            log(
+                f"relabel {image['id']} simplestreams version "
+                f"{simplestreams_version(image)} (blobs already on {RELEASE_TAG})"
+            )
             continue
         if upstream is None:
             upstream = load_upstream()
