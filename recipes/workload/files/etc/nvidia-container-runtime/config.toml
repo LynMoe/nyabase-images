@@ -1,0 +1,39 @@
+# Nyabase nested Docker (unprivileged Incus). Same file on CPU and GPU
+# workers: runc stays the default runtime, so plain `docker run` does not
+# touch this toolkit. `--gpus` is the only path that loads it.
+#
+# no-cgroups: guest cannot attach BPF_CGROUP_DEVICE programs.
+# load-kmods: guest cannot (and must not) load the host NVIDIA driver.
+disable-require = false
+supported-driver-capabilities = "compat32,compute,display,graphics,ngx,utility,video"
+
+[nvidia-container-cli]
+environment = []
+ldconfig = "@/sbin/ldconfig.real"
+load-kmods = false
+no-cgroups = true
+
+[nvidia-container-runtime]
+log-level = "info"
+mode = "auto"
+runtimes = ["runc", "crun"]
+
+[nvidia-container-runtime.modes]
+
+[nvidia-container-runtime.modes.cdi]
+annotation-prefixes = ["cdi.k8s.io/"]
+default-kind = "nvidia.com/gpu"
+spec-dirs = ["/etc/cdi", "/var/run/cdi"]
+
+[nvidia-container-runtime.modes.csv]
+mount-spec-path = "/etc/nvidia-container-runtime/host-files-for-container.d"
+
+[nvidia-container-runtime.modes.legacy]
+cuda-compat-mode = "ldconfig"
+
+[nvidia-container-runtime-hook]
+path = "nvidia-container-runtime-hook"
+skip-mode-detection = false
+
+[nvidia-ctk]
+path = "nvidia-ctk"

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
+import stat
 import subprocess
 import sys
 import tarfile
@@ -47,6 +49,92 @@ def assert_exists(path: Path, label: str) -> None:
         fail(f"missing {label}: {path}")
 
 
+def _is_enabled_unit(rootfs: Path, unit: str) -> bool:
+    for wants in (
+        rootfs / "etc/systemd/system/multi-user.target.wants" / unit,
+        rootfs / "etc/systemd/system/docker.service.wants" / unit,
+        rootfs / "etc/systemd/system" / unit,
+    ):
+        if wants.exists() or wants.is_symlink():
+            return True
+    return False
+
+
+def _is_masked_unit(rootfs: Path, unit: str) -> bool:
+    link = rootfs / "etc/systemd/system" / unit
+    if not link.is_symlink():
+        return False
+    return os.readlink(link) == "/dev/null"
+
+
+def assert_nested_docker(rootfs: Path) -> None:
+    daemon_path = rootfs / "etc/docker/daemon.json"
+    assert_exists(daemon_path, "docker daemon.json")
+    daemon = json.loads(daemon_path.read_text())
+    if daemon.get("default-runtime"):
+        fail("docker default-runtime must stay unset so CPU guests keep runc")
+    nvidia = (daemon.get("runtimes") or {}).get("nvidia") or {}
+    if nvidia.get("path") != "nvidia-container-runtime":
+        fail("docker daemon.json is missing the nvidia runtime")
+
+    toml = rootfs / "etc/nvidia-container-runtime/config.toml"
+    assert_exists(toml, "nvidia-container-runtime config.toml")
+    body = toml.read_text()
+    if "no-cgroups = true" not in body:
+        fail("nvidia config.toml must set no-cgroups = true")
+    if "load-kmods = false" not in body:
+        fail("nvidia config.toml must set load-kmods = false")
+
+    script = rootfs / "usr/lib/nyabase/nvidia-proc-gpus.sh"
+    assert_exists(script, "nvidia-proc-gpus.sh")
+    mode = stat.S_IMODE(script.stat().st_mode)
+    if mode & 0o111 == 0:
+        fail("nvidia-proc-gpus.sh is not executable")
+    assert_nvidia_proc_gpus_script(script)
+
+    if not _is_enabled_unit(rootfs, "docker.service"):
+        fail("docker.service is not enabled")
+    if not _is_enabled_unit(rootfs, "nyabase-nvidia-proc-gpus.service"):
+        fail("nyabase-nvidia-proc-gpus.service is not enabled")
+    for unit in ("nvidia-cdi-refresh.service", "nvidia-cdi-refresh.path"):
+        if not _is_masked_unit(rootfs, unit):
+            fail(f"{unit} is not masked")
+
+
+def assert_nvidia_proc_gpus_script(script: Path) -> None:
+    env = os.environ.copy()
+    with tempfile.TemporaryDirectory() as tmp:
+        missing = Path(tmp) / "missing"
+        env["NYABASE_PROC_NVIDIA"] = str(missing)
+        env["NYABASE_NVIDIA_SMI"] = str(Path(tmp) / "no-smi")
+        skipped = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True)
+        if skipped.returncode != 0:
+            fail(f"nvidia-proc-gpus.sh without procfs failed: {skipped.stderr}")
+
+        proc = Path(tmp) / "nvidia"
+        proc.mkdir()
+        smi = Path(tmp) / "nvidia-smi"
+        smi.write_text("#!/bin/sh\nexit 1\n")
+        smi.chmod(0o755)
+        env["NYABASE_PROC_NVIDIA"] = str(proc)
+        env["NYABASE_NVIDIA_SMI"] = str(smi)
+        failed_smi = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True)
+        if failed_smi.returncode != 0:
+            fail(f"nvidia-proc-gpus.sh must ignore nvidia-smi errors: {failed_smi.stderr}")
+        if (proc / "gpus").exists():
+            fail("nvidia-proc-gpus.sh created gpus/ after nvidia-smi failure")
+
+        smi.write_text("#!/bin/sh\necho '00000000:41:00.0'\necho ' 00000000:81:00.0 '\n")
+        ok = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True)
+        if ok.returncode != 0:
+            fail(f"nvidia-proc-gpus.sh with fake GPUs failed: {ok.stderr}")
+        for pci in ("0000:41:00.0", "0000:81:00.0"):
+            if not (proc / "gpus" / pci).is_dir():
+                fail(f"nvidia-proc-gpus.sh did not create gpus/{pci}")
+        if (proc / "gpus" / "00000000:41:00.0").exists():
+            fail("nvidia-proc-gpus.sh kept the 8-digit PCI domain")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rootfs", required=True, type=Path)
@@ -54,7 +142,7 @@ def main() -> int:
     parser.add_argument("--squashfs", type=Path)
     parser.add_argument("--metadata-tar", type=Path)
     parser.add_argument("--expected-combined", type=str)
-    parser.add_argument("--max-bytes", type=int, default=209_715_200)
+    parser.add_argument("--max-bytes", type=int, default=419_430_400)
     args = parser.parse_args()
     rootfs: Path = args.rootfs
     if not rootfs.is_dir():
@@ -70,6 +158,10 @@ def main() -> int:
         "wget",
         "vim",
         "htop",
+        "docker.io",
+        "iptables",
+        "gnupg",
+        "nvidia-container-toolkit",
     ):
         dpkg = run_chroot(rootfs, ["dpkg-query", "-W", "-f=${Status}", pkg])
         if dpkg.returncode != 0 or "install ok installed" not in dpkg.stdout:
@@ -77,6 +169,10 @@ def main() -> int:
     assert_exists(rootfs / "usr/sbin/sshd", "sshd")
     assert_exists(rootfs / "usr/bin/wget", "wget")
     assert_exists(rootfs / "usr/bin/curl", "curl")
+    assert_exists(rootfs / "usr/bin/docker", "docker")
+    assert_exists(rootfs / "usr/bin/nvidia-container-runtime", "nvidia-container-runtime")
+    assert_exists(rootfs / "usr/bin/nvidia-container-cli", "nvidia-container-cli")
+    assert_nested_docker(rootfs)
     resolved = rootfs / "etc/systemd/system/systemd-resolved.service"
     if not (resolved.is_symlink() and os.readlink(resolved) == "/dev/null"):
         fail("systemd-resolved.service is not masked")

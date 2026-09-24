@@ -1,0 +1,14 @@
+[Unit]
+Description=Create NVIDIA procfs GPU paths for nested Docker
+Documentation=file:///usr/lib/nyabase/nvidia-proc-gpus.sh
+After=local-fs.target
+Before=docker.service
+ConditionPathIsDirectory=/proc/driver/nvidia
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/nyabase/nvidia-proc-gpus.sh
+
+[Install]
+WantedBy=docker.service

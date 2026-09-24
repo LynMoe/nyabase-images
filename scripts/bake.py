@@ -56,6 +56,18 @@ def pack_squashfs(src: Path, dest: Path) -> None:
     )
 
 
+def install_recipe_files(rootfs: Path) -> None:
+    src_root = RECIPE / "files"
+    for src in sorted(src_root.rglob("*")):
+        if not src.is_file():
+            continue
+        dest = rootfs / src.relative_to(src_root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        if src.suffix == ".sh":
+            os.chmod(dest, 0o755)
+
+
 def chroot_bake(rootfs: Path) -> None:
     bake_dir = rootfs / "nyabase-bake"
     bake_dir.mkdir(parents=True, exist_ok=True)
@@ -72,8 +84,14 @@ def chroot_bake(rootfs: Path) -> None:
     os.chmod(bake_dir / "guest-bake.sh", 0o755)
 
     resolv = rootfs / "etc/resolv.conf"
-    if resolv.is_symlink() or not resolv.exists():
-        resolv.unlink(missing_ok=True)
+    resolv.unlink(missing_ok=True)
+    host_resolv = Path("/etc/resolv.conf")
+    # Chroot shares the host netns. Use the host resolver during apt; the
+    # finally block restores the runtime placeholder. A regular-file
+    # resolv.conf (already-baked input) must be replaced too.
+    if host_resolv.exists():
+        resolv.write_text(host_resolv.read_text())
+    else:
         resolv.write_text("nameserver 1.1.1.1\n")
     (rootfs / "etc/machine-id").write_text("")
 
@@ -91,9 +109,14 @@ def chroot_bake(rootfs: Path) -> None:
             ["chroot", str(rootfs), "/bin/bash", "/nyabase-bake/guest-bake.sh"],
             env=env,
         )
+        install_recipe_files(rootfs)
         run(["systemctl", "--root", str(rootfs), "mask", "systemd-resolved"], check=False)
         run(["systemctl", "--root", str(rootfs), "disable", "systemd-resolved"], check=False)
         run(["systemctl", "--root", str(rootfs), "disable", "NetworkManager"], check=False)
+        for unit in ("nvidia-cdi-refresh.service", "nvidia-cdi-refresh.path"):
+            run(["systemctl", "--root", str(rootfs), "mask", unit], check=False)
+        run(["systemctl", "--root", str(rootfs), "enable", "docker.service"])
+        run(["systemctl", "--root", str(rootfs), "enable", "nyabase-nvidia-proc-gpus.service"])
         enable = subprocess.run(
             ["systemctl", "--root", str(rootfs), "enable", "ssh.service"],
             check=False,

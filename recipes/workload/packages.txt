@@ -7,3 +7,6 @@ curl
 wget
 vim
 htop
+docker.io
+iptables
+gnupg

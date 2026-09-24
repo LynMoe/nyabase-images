@@ -17,8 +17,8 @@ Versions live in `images/*/image.json`:
 Actions **do not** track upstream daily builds. Bump `version` (and set a
 still-available `upstream_version`) then push.
 
-Current pins: Ubuntu 22.04 **v1** and 24.04 **v1**, both serial
-`20260920_07:42`, amd64 `default` (squashfs + metadata only).
+Current pins: Ubuntu 22.04 **v3** and 24.04 **v3**, bake serial
+`20260924_nb01` (upstream snapshot `20260920_07:42`), amd64 `default`.
 
 ## Incus remote
 

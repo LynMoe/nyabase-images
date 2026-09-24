@@ -10,11 +10,21 @@ install -d -m 0755 /nyabase-bake
 if [[ -f /nyabase-bake/packages.txt ]]; then
   mapfile -t packages < /nyabase-bake/packages.txt
 else
-  packages=(openssh-server iproute2 iputils-ping ca-certificates bash curl wget vim htop)
+  packages=(openssh-server iproute2 iputils-ping ca-certificates bash curl wget vim htop docker.io iptables gnupg)
 fi
 
 apt-get update -qq
 apt-get install -y --no-install-recommends "${packages[@]}"
+
+install -d -m 0755 /usr/share/keyrings
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+chmod 0644 /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+cat > /etc/apt/sources.list.d/nvidia-container-toolkit.list <<'EOF'
+deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /
+EOF
+apt-get update -qq
+apt-get install -y --no-install-recommends nvidia-container-toolkit
 
 apt-get purge -y 'cloud-init*' || true
 if ! apt-get purge -y netplan.io 2>/dev/null; then
