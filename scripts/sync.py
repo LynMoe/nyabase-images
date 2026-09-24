@@ -111,7 +111,7 @@ def vanilla_asset_name(image: dict, filename: str) -> str:
     serial = str(image["upstream_version"]).replace(":", "-")
     return (
         f"{image['os']}-{image['release']}-{image['arch']}-"
-        f"vanilla-u{serial}-{filename}"
+        f"{image['variant']}-vanilla-u{serial}-{filename}"
     )
 
 
