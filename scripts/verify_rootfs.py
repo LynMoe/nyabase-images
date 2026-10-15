@@ -124,15 +124,22 @@ def assert_nvidia_proc_gpus_script(script: Path) -> None:
         if (proc / "gpus").exists():
             fail("nvidia-proc-gpus.sh created gpus/ after nvidia-smi failure")
 
-        smi.write_text("#!/bin/sh\necho '00000000:41:00.0'\necho ' 00000000:81:00.0 '\n")
+        smi.write_text(
+            "#!/bin/sh\n"
+            "echo '00000000:41:00.0'\n"
+            "echo ' 00000000:81:00.0 '\n"
+            "echo '00000000:A1:00.0'\n"
+        )
         ok = subprocess.run(["bash", str(script)], env=env, text=True, capture_output=True)
         if ok.returncode != 0:
             fail(f"nvidia-proc-gpus.sh with fake GPUs failed: {ok.stderr}")
-        for pci in ("0000:41:00.0", "0000:81:00.0"):
+        for pci in ("0000:41:00.0", "0000:81:00.0", "0000:a1:00.0"):
             if not (proc / "gpus" / pci).is_dir():
                 fail(f"nvidia-proc-gpus.sh did not create gpus/{pci}")
         if (proc / "gpus" / "00000000:41:00.0").exists():
             fail("nvidia-proc-gpus.sh kept the 8-digit PCI domain")
+        if (proc / "gpus" / "0000:A1:00.0").exists():
+            fail("nvidia-proc-gpus.sh kept uppercase hex in the PCI address")
 
 
 def main() -> int:

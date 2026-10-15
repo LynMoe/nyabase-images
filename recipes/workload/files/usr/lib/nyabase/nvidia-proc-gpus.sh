@@ -4,6 +4,9 @@
 # /proc/driver/nvidia without that tree. PCI addresses are known only after
 # the guest has devices, so this runs every boot (the stub is a tmpfs).
 #
+# nvidia-smi prints 00000000:A1:00.0. The hook stats the short lowercase
+# path 0000:a1:00.0. Uppercase hex is a different directory.
+#
 # No-ops on CPU guests: missing procfs, missing nvidia-smi, or no cards.
 set -euo pipefail
 
@@ -26,5 +29,6 @@ for pci in "${pcis[@]}"; do
     continue
   fi
   pci="${pci/#00000000:/0000:}"
+  pci="${pci,,}"
   mkdir -p "$proc/gpus/$pci"
 done

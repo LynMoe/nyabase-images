@@ -1,6 +1,6 @@
 # Ubuntu 22.04 (Jammy)
 
-Pinned project version: **3** (Nyabase workload bake `20260924_nb01`)  
+Pinned project version: **4** (Nyabase workload bake `20261015_nb01`)  
 Upstream snapshot input: `ubuntu:jammy:amd64:default` @ `20260920_07:42`  
 Baked with `recipes/workload` (sshd, nested Docker + NVIDIA toolkit, no guest DHCP, root key login).
 
