@@ -6,11 +6,14 @@ import argparse
 import hashlib
 import json
 import os
+import socketserver
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 
@@ -142,6 +145,101 @@ def assert_nvidia_proc_gpus_script(script: Path) -> None:
             fail("nvidia-proc-gpus.sh kept uppercase hex in the PCI address")
 
 
+PROMPT_HOOK = "/usr/lib/nyabase/prompt.sh"
+PROMPT_LABELS = {
+    "container": "web-01",
+    # Must not run, and the control character must not reach the terminal.
+    "server": "Aya 1\u53f7\u673a $(touch /tmp/nyabase-prompt-pwned)\x1b[31m",
+}
+
+
+class _GuestApi(BaseHTTPRequestHandler):
+    """The two display labels of the Incus guest API, as plain-text bodies."""
+
+    def do_GET(self) -> None:  # noqa: N802
+        prefix = "/1.0/config/user.nyabase.display."
+        value = PROMPT_LABELS.get(self.path[len(prefix):]) if self.path.startswith(prefix) else None
+        if value is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = value.encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def address_string(self) -> str:
+        return "guestapi"
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+class _UnixHttpServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
+def render_prompt(rootfs: Path, sock: str, env: list[str]) -> subprocess.CompletedProcess[str]:
+    return run_chroot(
+        rootfs,
+        [
+            "env", "-i", "HOME=/root", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+            f"NYABASE_INCUS_SOCK={sock}", *env,
+            "bash", "-i", "-c", 'cd; . /root/.bashrc; printf "%s|%s" "$NYABASE_CONTAINER" "${PS1@P}"',
+        ],
+    )
+
+
+def assert_shell_prompt(rootfs: Path) -> None:
+    script = rootfs / PROMPT_HOOK.lstrip("/")
+    assert_exists(script, "prompt.sh")
+    for rc in ("root/.bashrc", "etc/skel/.bashrc"):
+        body = (rootfs / rc).read_text(errors="ignore")
+        if PROMPT_HOOK not in body:
+            fail(f"{rc} does not source {PROMPT_HOOK}")
+        if "*-256color) color_prompt=yes" not in body:
+            fail(f"{rc} is not the Debian skel .bashrc")
+    syntax = run_chroot(rootfs, ["bash", "-n", PROMPT_HOOK])
+    if syntax.returncode != 0:
+        fail(f"prompt.sh has a syntax error: {syntax.stderr}")
+
+    sock = "/run/nyabase-verify-guestapi.sock"
+    host_sock = rootfs / sock.lstrip("/")
+    host_sock.unlink(missing_ok=True)
+    # Bind relative to the socket's directory: AF_UNIX paths stop at ~108 bytes.
+    cwd = os.getcwd()
+    os.chdir(host_sock.parent)
+    try:
+        server = _UnixHttpServer(host_sock.name, _GuestApi)
+    finally:
+        os.chdir(cwd)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        colored = render_prompt(rootfs, sock, ["TERM=xterm-256color", "COLORTERM=truecolor"])
+        plain = render_prompt(rootfs, sock, ["TERM=vt100"])
+        missing = render_prompt(rootfs, "/run/nyabase-verify-missing.sock", ["TERM=vt100"])
+    finally:
+        server.shutdown()
+        server.server_close()
+        host_sock.unlink(missing_ok=True)
+    if (rootfs / "tmp/nyabase-prompt-pwned").exists():
+        fail("prompt.sh executed a command from a display label")
+    container, _, ps1 = plain.stdout.partition("|")
+    if container != "web-01":
+        fail(f"prompt.sh did not export NYABASE_CONTAINER: {plain.stdout!r} {plain.stderr!r}")
+    server_label = PROMPT_LABELS["server"].replace("\x1b", "")
+    expected = f"root@web-01 [{server_label}] ~# "
+    if ps1 != expected:
+        fail(f"plain prompt {ps1!r} != {expected!r}")
+    if "\x1b[38;2;" not in colored.stdout or server_label not in colored.stdout:
+        fail(f"truecolor prompt is not colored as expected: {colored.stdout!r}")
+    if "\x1b[31m" in colored.stdout:
+        fail("a control character from a display label reached the prompt")
+    if missing.stdout.partition("|")[0] != "" or "web-01" in missing.stdout:
+        fail(f"prompt.sh changed the prompt without the guest API: {missing.stdout!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rootfs", required=True, type=Path)
@@ -161,6 +259,7 @@ def main() -> int:
         "iputils-ping",
         "ca-certificates",
         "bash",
+        "bash-completion",
         "curl",
         "wget",
         "vim",
@@ -180,6 +279,7 @@ def main() -> int:
     assert_exists(rootfs / "usr/bin/nvidia-container-runtime", "nvidia-container-runtime")
     assert_exists(rootfs / "usr/bin/nvidia-container-cli", "nvidia-container-cli")
     assert_nested_docker(rootfs)
+    assert_shell_prompt(rootfs)
     resolved = rootfs / "etc/systemd/system/systemd-resolved.service"
     if not (resolved.is_symlink() and os.readlink(resolved) == "/dev/null"):
         fail("systemd-resolved.service is not masked")

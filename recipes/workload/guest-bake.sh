@@ -10,7 +10,7 @@ install -d -m 0755 /nyabase-bake
 if [[ -f /nyabase-bake/packages.txt ]]; then
   mapfile -t packages < /nyabase-bake/packages.txt
 else
-  packages=(openssh-server iproute2 iputils-ping ca-certificates bash curl wget vim htop docker.io iptables gnupg)
+  packages=(openssh-server iproute2 iputils-ping ca-certificates bash bash-completion curl wget vim htop docker.io iptables gnupg)
 fi
 
 apt-get update -qq
@@ -45,6 +45,20 @@ rm -f /etc/systemd/network/*eth0* /etc/systemd/network/*en* || true
 install -d -m 0755 /etc/ssh/sshd_config.d
 if [[ -f /nyabase-bake/99-nyabase.conf ]]; then
   cp /nyabase-bake/99-nyabase.conf /etc/ssh/sshd_config.d/99-nyabase.conf
+fi
+
+# Every account gets the Debian skel .bashrc (color prompt, ls colors,
+# completion) plus the Nyabase prompt; root's base-files .bashrc has neither.
+cat >> /etc/skel/.bashrc <<'EOF'
+
+# Nyabase: show the container and server names (root@web-01 [aya-1] ~#).
+if [ -r /usr/lib/nyabase/prompt.sh ]; then
+    . /usr/lib/nyabase/prompt.sh
+fi
+EOF
+install -m 0644 /etc/skel/.bashrc /root/.bashrc
+if id ubuntu >/dev/null 2>&1 && [[ -d /home/ubuntu ]]; then
+  install -m 0644 -o ubuntu -g ubuntu /etc/skel/.bashrc /home/ubuntu/.bashrc
 fi
 
 install -d -m 0755 /run/sshd

@@ -3,6 +3,7 @@ iproute2
 iputils-ping
 ca-certificates
 bash
+bash-completion
 curl
 wget
 vim

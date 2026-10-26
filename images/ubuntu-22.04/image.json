@@ -5,12 +5,12 @@
   "codename": "jammy",
   "arch": "amd64",
   "variant": "default",
-  "version": "4",
+  "version": "5",
   "upstream_product": "ubuntu:jammy:amd64:default",
   "upstream_version": "20260920_07:42",
   "bake": {
-    "recipe": "workload-v2",
-    "serial": "20261015_nb01"
+    "recipe": "workload-v3",
+    "serial": "20261026_nb01"
   },
   "aliases": [
     "ubuntu/22.04",
