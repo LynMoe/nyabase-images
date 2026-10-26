@@ -31,6 +31,13 @@ __nyabase_prompt_setup() {
   server=$(__nyabase_label server) || server=
   export NYABASE_CONTAINER="$container" NYABASE_SERVER="$server"
 
+  # readline measures the prompt with the locale's character widths. A locale
+  # the image lacks (say a forwarded LANG=zh_CN.UTF-8) falls back to ASCII,
+  # where a CJK server name counts 3 columns a character and lines wrap wrong.
+  if [[ -z ${LC_ALL:-} && $(locale charmap 2>/dev/null) != UTF-8 ]]; then
+    export LC_CTYPE=C.UTF-8
+  fi
+
   local mode=none
   if [[ -z ${NO_COLOR:-} && ${TERM:-dumb} != dumb ]]; then
     case "${COLORTERM:-}" in

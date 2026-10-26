@@ -158,7 +158,8 @@ class _GuestApi(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         prefix = "/1.0/config/user.nyabase.display."
-        value = PROMPT_LABELS.get(self.path[len(prefix):]) if self.path.startswith(prefix) else None
+        labels = self.server.labels  # type: ignore[attr-defined]
+        value = labels.get(self.path[len(prefix):]) if self.path.startswith(prefix) else None
         if value is None:
             self.send_response(404)
             self.end_headers()
@@ -178,6 +179,7 @@ class _GuestApi(BaseHTTPRequestHandler):
 
 class _UnixHttpServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    labels: dict[str, str] = PROMPT_LABELS
 
 
 def render_prompt(rootfs: Path, sock: str, env: list[str]) -> subprocess.CompletedProcess[str]:
@@ -185,8 +187,10 @@ def render_prompt(rootfs: Path, sock: str, env: list[str]) -> subprocess.Complet
         rootfs,
         [
             "env", "-i", "HOME=/root", "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
-            f"NYABASE_INCUS_SOCK={sock}", *env,
-            "bash", "-i", "-c", 'cd; . /root/.bashrc; printf "%s|%s" "$NYABASE_CONTAINER" "${PS1@P}"',
+            # A login's locale (pam_env reads /etc/default/locale); cases may override it.
+            f"NYABASE_INCUS_SOCK={sock}", "LANG=en_US.UTF-8", *env,
+            # bash -i reads ~/.bashrc itself.
+            "bash", "-i", "-c", 'cd; printf "%s|%s|%s" "$NYABASE_CONTAINER" "${LC_CTYPE:-}" "${PS1@P}"',
         ],
     )
 
@@ -219,13 +223,17 @@ def assert_shell_prompt(rootfs: Path) -> None:
         colored = render_prompt(rootfs, sock, ["TERM=xterm-256color", "COLORTERM=truecolor"])
         plain = render_prompt(rootfs, sock, ["TERM=vt100"])
         missing = render_prompt(rootfs, "/run/nyabase-verify-missing.sock", ["TERM=vt100"])
+        # A locale the image lacks must not leave readline counting bytes.
+        foreign = render_prompt(rootfs, sock, ["TERM=vt100", "LANG=zh_CN.UTF-8"])
+        server.labels = {"server": PROMPT_LABELS["server"]}
+        unlabeled = render_prompt(rootfs, sock, ["TERM=vt100"])
     finally:
         server.shutdown()
         server.server_close()
         host_sock.unlink(missing_ok=True)
     if (rootfs / "tmp/nyabase-prompt-pwned").exists():
         fail("prompt.sh executed a command from a display label")
-    container, _, ps1 = plain.stdout.partition("|")
+    container, lc_ctype, ps1 = plain.stdout.split("|", 2)
     if container != "web-01":
         fail(f"prompt.sh did not export NYABASE_CONTAINER: {plain.stdout!r} {plain.stderr!r}")
     server_label = PROMPT_LABELS["server"].replace("\x1b", "")
@@ -236,8 +244,13 @@ def assert_shell_prompt(rootfs: Path) -> None:
         fail(f"truecolor prompt is not colored as expected: {colored.stdout!r}")
     if "\x1b[31m" in colored.stdout:
         fail("a control character from a display label reached the prompt")
-    if missing.stdout.partition("|")[0] != "" or "web-01" in missing.stdout:
-        fail(f"prompt.sh changed the prompt without the guest API: {missing.stdout!r}")
+    if lc_ctype:
+        fail(f"prompt.sh changed LC_CTYPE under a UTF-8 locale: {lc_ctype!r}")
+    if foreign.stdout.split("|", 2)[1] != "C.UTF-8":
+        fail(f"prompt.sh kept a non-UTF-8 locale: {foreign.stdout!r} {foreign.stderr!r}")
+    for label, result in (("without the guest API", missing), ("without a container label (404)", unlabeled)):
+        if result.stdout.partition("|")[0] != "" or "web-01" in result.stdout or "Aya" in result.stdout:
+            fail(f"prompt.sh changed the prompt {label}: {result.stdout!r}")
 
 
 def main() -> int:
