@@ -70,6 +70,10 @@ if id ubuntu >/dev/null 2>&1; then
   rm -f /home/ubuntu/.ssh/authorized_keys || true
 fi
 
+# logrotate runs daily, but rsyslog's files rotate weekly (jammy's syslog
+# daily) whatever their size; maxsize rotates a chatty log early.
+sed -i -E 's/^([[:space:]]*)rotate [0-9]+$/&\n\1maxsize 100M/' /etc/logrotate.d/rsyslog
+
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 rm -f /usr/sbin/policy-rc.d

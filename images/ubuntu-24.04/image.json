@@ -5,12 +5,12 @@
   "codename": "noble",
   "arch": "amd64",
   "variant": "default",
-  "version": "5",
+  "version": "6",
   "upstream_product": "ubuntu:noble:amd64:default",
   "upstream_version": "20260920_07:42",
   "bake": {
     "recipe": "workload-v3",
-    "serial": "20261026_nb01"
+    "serial": "20261027_nb01"
   },
   "aliases": [
     "ubuntu/24.04",

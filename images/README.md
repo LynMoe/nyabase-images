@@ -9,8 +9,8 @@ is the GitHub/Worker blob pin, not the catalog key.
 
 | Directory | Alias | Pinned version | Bake serial | Upstream serial |
 | :--- | :--- | :--- | :--- | :--- |
-| `ubuntu-22.04/` | `ubuntu/22.04` | `5` | `20261026_nb01` | `20260920_07:42` |
-| `ubuntu-24.04/` | `ubuntu/24.04` | `5` | `20261026_nb01` | `20260920_07:42` |
+| `ubuntu-22.04/` | `ubuntu/22.04` | `6` | `20261027_nb01` | `20260920_07:42` |
+| `ubuntu-24.04/` | `ubuntu/24.04` | `6` | `20261027_nb01` | `20260920_07:42` |
 
 These aliases are **Nyabase workload images** (sshd, platform-managed networking), not vanilla linuxcontainers snapshots. Vanilla squashfs is kept on Release tag `stable` as `-vanilla-u…` input assets and is **not** a catalog product.
 

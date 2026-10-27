@@ -79,6 +79,15 @@ def assert_nested_docker(rootfs: Path) -> None:
     nvidia = (daemon.get("runtimes") or {}).get("nvidia") or {}
     if nvidia.get("path") != "nvidia-container-runtime":
         fail("docker daemon.json is missing the nvidia runtime")
+    if daemon.get("storage-driver") != "overlay2":
+        fail("docker daemon.json must pin storage-driver overlay2")
+    if (daemon.get("features") or {}).get("containerd-snapshotter") is not False:
+        fail("docker daemon.json must turn the containerd image store off")
+    if daemon.get("log-driver") != "json-file" or daemon.get("log-opts") != {
+        "max-size": "1m",
+        "max-file": "5",
+    }:
+        fail("docker daemon.json must cap json-file logs at 5 x 1m")
 
     toml = rootfs / "etc/nvidia-container-runtime/config.toml"
     assert_exists(toml, "nvidia-container-runtime config.toml")
@@ -253,6 +262,22 @@ def assert_shell_prompt(rootfs: Path) -> None:
             fail(f"prompt.sh changed the prompt {label}: {result.stdout!r}")
 
 
+def assert_log_caps(rootfs: Path) -> None:
+    journald = rootfs / "etc/systemd/journald.conf.d/99-nyabase.conf"
+    assert_exists(journald, "journald drop-in")
+    lines = [line.strip() for line in journald.read_text().splitlines()]
+    if "[Journal]" not in lines or "SystemMaxUse=500M" not in lines:
+        fail("journald drop-in must set SystemMaxUse=500M")
+
+    rsyslog = rootfs / "etc/logrotate.d/rsyslog"
+    assert_exists(rsyslog, "rsyslog logrotate config")
+    lines = [line.strip() for line in rsyslog.read_text().splitlines()]
+    stanzas = sum(1 for line in lines if line.startswith("rotate "))
+    capped = sum(1 for line in lines if line == "maxsize 100M")
+    if stanzas == 0 or capped != stanzas:
+        fail("every rsyslog logrotate stanza must set maxsize 100M")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rootfs", required=True, type=Path)
@@ -292,6 +317,7 @@ def main() -> int:
     assert_exists(rootfs / "usr/bin/nvidia-container-runtime", "nvidia-container-runtime")
     assert_exists(rootfs / "usr/bin/nvidia-container-cli", "nvidia-container-cli")
     assert_nested_docker(rootfs)
+    assert_log_caps(rootfs)
     assert_shell_prompt(rootfs)
     resolved = rootfs / "etc/systemd/system/systemd-resolved.service"
     if not (resolved.is_symlink() and os.readlink(resolved) == "/dev/null"):
